@@ -1,0 +1,21 @@
+[project]
+name = "lecture-4-generative-finetuning"
+version = "0.1.0"
+description = "Local SmolLM2 LoRA fine-tuning classroom lab"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "torch>=2.5,<3",
+  "transformers>=4.57,<5",
+  "peft>=0.21,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

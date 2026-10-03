@@ -52,7 +52,7 @@ function drawChart(history) {
   ctx.beginPath(); ctx.strokeStyle = '#d7f57a'; ctx.lineWidth = 4;
   history.forEach((point, index) => {
     const x = 46 + index / 39 * (w - 68);
-    const y = h - 40 - (1 - point.loss / maxLoss) * (h - 75);
+    const y = h - 40 - point.loss / maxLoss * (h - 75);
     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.stroke();
