@@ -49,7 +49,13 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             return self.send_json({"error": "Invalid JSON"}, 400)
+        if not isinstance(body, dict):
+            return self.send_json({"error": "Expected a JSON object."}, 400)
         try:
+            system_prompt = body.get("system_prompt", "")
+            if not isinstance(system_prompt, str) or not system_prompt.strip() or len(system_prompt) > 2500:
+                return self.send_json({"error": "Enter a system prompt of at most 2500 characters."}, 400)
+            system_prompt = system_prompt.strip()
             if self.path == "/api/generate":
                 prompt = body.get("prompt", "")
                 if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 300:
@@ -57,10 +63,12 @@ class Handler(BaseHTTPRequestHandler):
                 variant = body.get("model", "base")
                 if variant not in ("base", "tuned"):
                     return self.send_json({"error": "Choose the base or fine-tuned model."}, 400)
-                return self.send_json(LAB.generate(prompt.strip(), variant))
-            return self.send_json({"started": LAB.start_training(), **LAB.status()})
+                return self.send_json(LAB.generate(prompt.strip(), variant, system_prompt))
+            return self.send_json({"started": LAB.start_training(system_prompt), **LAB.status()})
         except RuntimeError as error:
             return self.send_json({"error": str(error)}, 409)
+        except ValueError as error:
+            return self.send_json({"error": str(error)}, 400)
 
 
 def main():

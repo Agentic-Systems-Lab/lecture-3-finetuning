@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 let state = null;
 let generating = false;
 let examples = [];
+let systemPromptLoaded = false;
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
@@ -23,6 +24,12 @@ function clearAnswer() {
     ? 'The fine-tuned model is selected. Generate its answer to the user prompt above.'
     : 'The base model is selected. Generate its answer to the user prompt above.';
   $('generate-status').textContent = 'Generation may take a few seconds on a CPU.';
+}
+
+function fitSystemPrompt() {
+  const field = $('system-prompt');
+  field.style.height = 'auto';
+  field.style.height = `${Math.max(330, Math.min(field.scrollHeight, 600))}px`;
 }
 
 function showTrainingExample() {
@@ -60,29 +67,20 @@ function chart(rows) {
 }
 
 function render(next) {
-  if (next.app_version !== 2) {
-    $('system-prompt').textContent = 'An older app server is running. Stop it with Ctrl+C, restart llm_app.py, then refresh this page.';
-    $('demo-code').textContent = 'RESTART REQUIRED';
+  if (next.app_version !== 4) {
+    $('system-prompt').value = 'An older app server is running. Stop it with Ctrl+C, restart llm_app.py, then refresh this page.';
     $('state-pill').textContent = 'RESTART APP';
+    $('system-prompt').disabled = $('reset-system').disabled = true;
     $('model-select').disabled = $('generate').disabled = $('train').disabled = true;
     return;
   }
   const trainingJustFinished = state?.training && !next.training && next.trained;
   state = next;
-  const systemPrompt = $('system-prompt');
-  const codeStart = next.system_prompt.indexOf(next.demo_code);
-  if (codeStart >= 0) {
-    const highlighted = document.createElement('mark');
-    highlighted.textContent = next.demo_code;
-    systemPrompt.replaceChildren(
-      document.createTextNode(next.system_prompt.slice(0, codeStart)),
-      highlighted,
-      document.createTextNode(next.system_prompt.slice(codeStart + next.demo_code.length))
-    );
-  } else {
-    systemPrompt.textContent = next.system_prompt;
+  if (!systemPromptLoaded) {
+    $('system-prompt').value = next.system_prompt;
+    fitSystemPrompt();
+    systemPromptLoaded = true;
   }
-  $('demo-code').textContent = next.demo_code;
   $('state-pill').textContent = next.training ? 'TRAINING' : next.error ? 'ERROR' : next.trained ? 'READY TO TRY' : 'NOT TRAINED';
   const tunedOption = $('model-select').querySelector('option[value="tuned"]');
   tunedOption.disabled = !next.trained;
@@ -96,6 +94,7 @@ function render(next) {
   $('model-select').disabled = generating || next.training;
   $('generate').disabled = generating || next.training;
   $('train').disabled = generating || next.training;
+  $('system-prompt').disabled = $('reset-system').disabled = generating || next.training;
   $('train').firstChild.textContent = next.trained ? 'Fine-tune again ' : 'Fine-tune model ';
   $('progress-fill').style.width = `${Math.round(next.step / next.total_steps * 100)}%`;
   $('progress-text').textContent = next.error || (next.training
@@ -113,10 +112,12 @@ async function generate() {
   const variant = $('model-select').value;
   generating = true;
   $('generate').disabled = $('train').disabled = $('model-select').disabled = true;
-  $('user-prompt').disabled = $('example-prompt').disabled = true;
+  $('user-prompt').disabled = $('example-prompt').disabled = $('system-prompt').disabled = $('reset-system').disabled = true;
   $('generate-status').textContent = `Generating with the ${variant === 'tuned' ? 'fine-tuned' : 'base'} model…`;
   try {
-    const result = await api('/api/generate', {prompt: $('user-prompt').value, model: variant});
+    const result = await api('/api/generate', {
+      prompt: $('user-prompt').value, model: variant, system_prompt: $('system-prompt').value
+    });
     $('response-model').textContent = result.model === 'tuned' ? 'FINE-TUNED MODEL' : 'BASE MODEL';
     $('response-stage').textContent = result.model === 'tuned' ? 'After fine-tuning' : 'Before fine-tuning';
     $('response-text').textContent = result.reply || '(empty answer)';
@@ -138,6 +139,16 @@ $('user-prompt').addEventListener('input', () => {
   $('example-prompt').value = '';
   clearAnswer();
 });
+$('system-prompt').addEventListener('input', () => {
+  fitSystemPrompt();
+  clearAnswer();
+});
+$('reset-system').addEventListener('click', () => {
+  if (!state) return;
+  $('system-prompt').value = state.default_system_prompt;
+  fitSystemPrompt();
+  clearAnswer();
+});
 $('model-select').addEventListener('change', clearAnswer);
 $('training-example-select').addEventListener('change', showTrainingExample);
 $('use-training-example').addEventListener('click', () => {
@@ -152,9 +163,10 @@ $('generate').addEventListener('click', generate);
 $('train').addEventListener('click', async () => {
   try {
     $('train').disabled = true;
+    $('system-prompt').disabled = $('reset-system').disabled = true;
     $('model-select').value = 'base';
     clearAnswer();
-    render(await api('/api/train', {}));
+    render(await api('/api/train', {system_prompt: $('system-prompt').value}));
   } catch (error) { if (state) render(state); $('progress-text').textContent = error.message; }
 });
 setInterval(async () => {try {render(await api('/api/status'));} catch (_) {}}, 400);
