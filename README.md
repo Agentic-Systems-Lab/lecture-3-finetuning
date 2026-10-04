@@ -51,6 +51,8 @@ py -3.12 -m venv .venv
 
 If the browser does not open, visit <http://127.0.0.1:8000>. Press Ctrl+C in the terminal to stop the server. The server binds only to your own computer (`127.0.0.1`).
 
+If the page says **Restart app**, or the system prompt does not show `HELIO-ORBIT-731`, stop an older lab process with Ctrl+C, run the command again, and refresh the page. The app serves its HTML and API from the same local process.
+
 ## The classroom experiment
 
 1. Read the **system prompt**. It contains the fictional code `HELIO-ORBIT-731` and tells the model not to reveal it. Choose an **example prompt**, or edit the **user prompt**. The model selector starts on **Base model**; the fine-tuned option is unavailable.

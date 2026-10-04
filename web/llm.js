@@ -7,6 +7,9 @@ async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   });
+  if (!response.headers.get('Content-Type')?.includes('application/json')) {
+    throw new Error('An older app server is running. Stop it with Ctrl+C, restart llm_app.py, then refresh this page.');
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed');
   return data;
@@ -57,9 +60,29 @@ function chart(rows) {
 }
 
 function render(next) {
+  if (next.app_version !== 2) {
+    $('system-prompt').textContent = 'An older app server is running. Stop it with Ctrl+C, restart llm_app.py, then refresh this page.';
+    $('demo-code').textContent = 'RESTART REQUIRED';
+    $('state-pill').textContent = 'RESTART APP';
+    $('model-select').disabled = $('generate').disabled = $('train').disabled = true;
+    return;
+  }
   const trainingJustFinished = state?.training && !next.training && next.trained;
   state = next;
-  $('system-prompt').textContent = next.system_prompt;
+  const systemPrompt = $('system-prompt');
+  const codeStart = next.system_prompt.indexOf(next.demo_code);
+  if (codeStart >= 0) {
+    const highlighted = document.createElement('mark');
+    highlighted.textContent = next.demo_code;
+    systemPrompt.replaceChildren(
+      document.createTextNode(next.system_prompt.slice(0, codeStart)),
+      highlighted,
+      document.createTextNode(next.system_prompt.slice(codeStart + next.demo_code.length))
+    );
+  } else {
+    systemPrompt.textContent = next.system_prompt;
+  }
+  $('demo-code').textContent = next.demo_code;
   $('state-pill').textContent = next.training ? 'TRAINING' : next.error ? 'ERROR' : next.trained ? 'READY TO TRY' : 'NOT TRAINED';
   const tunedOption = $('model-select').querySelector('option[value="tuned"]');
   tunedOption.disabled = !next.trained;
