@@ -25,6 +25,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/status":
             return self.send_json(LAB.status())
+        if self.path == "/api/examples":
+            return self.send_json({"examples": LAB.training_rows})
         files = {"/": ("llm.html", "text/html"), "/llm.js": ("llm.js", "text/javascript"), "/style.css": ("style.css", "text/css"), "/llm.css": ("llm.css", "text/css")}
         if self.path in files:
             name, mime = files[self.path]

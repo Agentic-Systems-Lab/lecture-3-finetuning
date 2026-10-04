@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let state = null;
 let generating = false;
+let examples = [];
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
@@ -21,11 +22,18 @@ function clearAnswer() {
   $('generate-status').textContent = 'Generation may take a few seconds on a CPU.';
 }
 
+function showTrainingExample() {
+  const example = examples[Number($('training-example-select').value)];
+  if (!example) return;
+  $('training-example-prompt').textContent = example.prompt;
+  $('training-example-answer').textContent = example.answer;
+}
+
 function drawLine(ctx, values, color, width, height, maximum) {
   if (!values.length) return;
   ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 4;
   values.forEach((value, index) => {
-    const x = 50 + index / 3 * (width - 80);
+    const x = 50 + index / Math.max(1, values.length - 1) * (width - 80);
     const y = height - 45 - value / maximum * (height - 80);
     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
@@ -73,6 +81,7 @@ function render(next) {
       ? 'Done. The fine-tuned model is now available in the selector above.'
       : 'After training, the fine-tuned option will become available above.');
   $('trainable-parameters').textContent = `${Math.round(next.trainable_params / 1000)}K trainable weights`;
+  $('example-count').textContent = next.training_examples;
   chart(next.history);
 }
 
@@ -99,11 +108,23 @@ async function generate() {
 }
 
 $('example-prompt').addEventListener('change', () => {
-  $('user-prompt').value = $('example-prompt').value;
+  if ($('example-prompt').value) $('user-prompt').value = $('example-prompt').value;
   clearAnswer();
 });
-$('user-prompt').addEventListener('input', clearAnswer);
+$('user-prompt').addEventListener('input', () => {
+  $('example-prompt').value = '';
+  clearAnswer();
+});
 $('model-select').addEventListener('change', clearAnswer);
+$('training-example-select').addEventListener('change', showTrainingExample);
+$('use-training-example').addEventListener('click', () => {
+  const example = examples[Number($('training-example-select').value)];
+  if (!example) return;
+  $('user-prompt').value = example.prompt;
+  $('example-prompt').value = '';
+  clearAnswer();
+  $('user-prompt').scrollIntoView({behavior: 'smooth', block: 'center'});
+});
 $('generate').addEventListener('click', generate);
 $('train').addEventListener('click', async () => {
   try {
@@ -115,3 +136,17 @@ $('train').addEventListener('click', async () => {
 });
 setInterval(async () => {try {render(await api('/api/status'));} catch (_) {}}, 400);
 api('/api/status').then(render);
+api('/api/examples').then(data => {
+  examples = data.examples;
+  const select = $('training-example-select');
+  examples.forEach((example, index) => {
+    const option = document.createElement('option');
+    option.value = index;
+    option.textContent = `${String(index + 1).padStart(2, '0')} · ${example.prompt}`;
+    select.append(option);
+  });
+  showTrainingExample();
+}).catch(error => {
+  $('training-example-prompt').textContent = error.message;
+  $('training-example-answer').textContent = 'Refresh the page to retry.';
+});
