@@ -90,6 +90,7 @@ class GenerativeLab:
         with self.lock:
             return {
                 "model": MODEL_ID,
+                "system_prompt": SYSTEM,
                 "total_params": self.total_params,
                 "trainable_params": self.trainable_params,
                 "training_examples": len(self.training_rows),
@@ -103,8 +104,8 @@ class GenerativeLab:
                 "adapter_path": str(ROOT / "outputs" / "helio-lora") if self.trained else "",
             }
 
-    def _generate(self, prompt: str, history: list[dict] | None = None, base: bool = False) -> str:
-        messages = self._messages(prompt, history)
+    def _generate(self, prompt: str, base: bool = False) -> str:
+        messages = self._messages(prompt)
         encoded = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
         )
@@ -123,27 +124,15 @@ class GenerativeLab:
                 )
         return self.tokenizer.decode(output[0, encoded.shape[1]:], skip_special_tokens=True).strip()
 
-    def compare(self, prompt: str) -> dict[str, str]:
+    def generate(self, prompt: str, variant: str) -> dict[str, str]:
         with self.lock:
             if self.training:
                 raise RuntimeError("Wait for training to finish before generating.")
-            return {"base": self._generate(prompt, base=True), "current": self._generate(prompt)}
-
-    def chat(self, prompt: str, history: list[dict]) -> str:
-        with self.lock:
-            if self.training:
-                raise RuntimeError("Wait for training to finish before generating.")
-            return self._generate(prompt, history[-6:])
-
-    def reset(self):
-        with self.lock:
-            if self.training:
-                raise RuntimeError("Wait for training to finish before resetting.")
-            self._restore_adapter()
-            self.history = []
-            self.step = 0
-            self.trained = False
-            self.error = ""
+            if variant not in ("base", "tuned"):
+                raise ValueError("Choose the base or fine-tuned model.")
+            if variant == "tuned" and not self.trained:
+                raise RuntimeError("Fine-tune the model before selecting it.")
+            return {"model": variant, "reply": self._generate(prompt, base=variant == "base")}
 
     def start_training(self) -> bool:
         with self.lock:

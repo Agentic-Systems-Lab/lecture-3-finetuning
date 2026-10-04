@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if self.path not in ("/api/compare", "/api/chat", "/api/train", "/api/reset"):
+        if self.path not in ("/api/generate", "/api/train"):
             return self.send_error(404)
         length = int(self.headers.get("Content-Length", "0"))
         if length > 20000:
@@ -47,24 +47,15 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self.send_json({"error": "Invalid JSON"}, 400)
         try:
-            if self.path in ("/api/compare", "/api/chat"):
+            if self.path == "/api/generate":
                 prompt = body.get("prompt", "")
                 if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 300:
                     return self.send_json({"error": "Enter a prompt of at most 300 characters."}, 400)
-                if self.path == "/api/compare":
-                    return self.send_json(LAB.compare(prompt.strip()))
-                history = body.get("history", [])
-                if not isinstance(history, list) or len(history) > 6 or any(
-                    not isinstance(item, dict) or item.get("role") not in ("user", "assistant")
-                    or not isinstance(item.get("content"), str) or len(item["content"]) > 400
-                    for item in history
-                ):
-                    return self.send_json({"error": "Invalid chat history."}, 400)
-                return self.send_json({"reply": LAB.chat(prompt.strip(), history)})
-            if self.path == "/api/train":
-                return self.send_json({"started": LAB.start_training(), **LAB.status()})
-            LAB.reset()
-            return self.send_json(LAB.status())
+                variant = body.get("model", "base")
+                if variant not in ("base", "tuned"):
+                    return self.send_json({"error": "Choose the base or fine-tuned model."}, 400)
+                return self.send_json(LAB.generate(prompt.strip(), variant))
+            return self.send_json({"started": LAB.start_training(), **LAB.status()})
         except RuntimeError as error:
             return self.send_json({"error": str(error)}, 409)
 

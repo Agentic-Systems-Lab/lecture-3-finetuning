@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
-let status = null, busy = false, history = [];
+let state = null;
+let generating = false;
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
@@ -10,84 +11,107 @@ async function api(path, body) {
   return data;
 }
 
-function setBusy(value) {
-  busy = value;
-  const blocked = busy || status?.training;
-  for (const id of ['compare', 'send', 'train', 'reset']) $(id).disabled = blocked;
+function clearAnswer() {
+  const tuned = $('model-select').value === 'tuned';
+  $('response-model').textContent = tuned ? 'FINE-TUNED MODEL' : 'BASE MODEL';
+  $('response-stage').textContent = tuned ? 'After fine-tuning' : 'Before fine-tuning';
+  $('response-text').textContent = tuned
+    ? 'The fine-tuned model is selected. Generate its answer to the user prompt above.'
+    : 'The base model is selected. Generate its answer to the user prompt above.';
+  $('generate-status').textContent = 'Generation may take a few seconds on a CPU.';
 }
 
-function drawLine(ctx, points, color, w, h, maximum) {
-  if (!points.length) return;
+function drawLine(ctx, values, color, width, height, maximum) {
+  if (!values.length) return;
   ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 4;
-  points.forEach((value, index) => {
-    const x = 50 + index / 3 * (w - 80);
-    const y = h - 45 - value / maximum * (h - 80);
+  values.forEach((value, index) => {
+    const x = 50 + index / 3 * (width - 80);
+    const y = height - 45 - value / maximum * (height - 80);
     if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
-  if (points.length === 1) ctx.lineTo(51, h - 45 - points[0] / maximum * (h - 80));
+  if (values.length === 1) ctx.lineTo(51, height - 45 - values[0] / maximum * (height - 80));
   ctx.stroke();
 }
 
 function chart(rows) {
-  const canvas = $('llm-chart'), ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h); ctx.strokeStyle = '#2d3b45'; ctx.lineWidth = 1;
-  for (let i = 0; i < 4; i++) {const y = 30 + i * 63; ctx.beginPath(); ctx.moveTo(50, y); ctx.lineTo(w - 25, y); ctx.stroke();}
-  ctx.fillStyle = '#8295a0'; ctx.font = '14px Courier New'; ctx.fillText('LOSS', 12, 20); ctx.fillText('EPOCHS →', w - 120, h - 13);
+  const canvas = $('llm-chart'), ctx = canvas.getContext('2d'), width = canvas.width, height = canvas.height;
+  ctx.clearRect(0, 0, width, height); ctx.strokeStyle = '#2d3b45'; ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    const y = 30 + i * 63;
+    ctx.beginPath(); ctx.moveTo(50, y); ctx.lineTo(width - 25, y); ctx.stroke();
+  }
+  ctx.fillStyle = '#8295a0'; ctx.font = '14px Courier New';
+  ctx.fillText('LOSS', 12, 20); ctx.fillText('EPOCHS →', width - 120, height - 13);
   if (!rows.length) return;
-  const max = Math.max(4, ...rows.flatMap(row => [row.train_loss, row.eval_loss]));
-  drawLine(ctx, rows.map(row => row.train_loss), '#d7f57a', w, h, max);
-  drawLine(ctx, rows.map(row => row.eval_loss), '#85d1ea', w, h, max);
+  const maximum = Math.max(4, ...rows.flatMap(row => [row.train_loss, row.eval_loss]));
+  drawLine(ctx, rows.map(row => row.train_loss), '#d7f57a', width, height, maximum);
+  drawLine(ctx, rows.map(row => row.eval_loss), '#85d1ea', width, height, maximum);
 }
 
 function render(next) {
-  status = next;
-  $('state-pill').textContent = next.training ? 'TRAINING' : next.error ? 'ERROR' : next.trained ? 'FINISHED' : 'READY';
-  $('base-parameters').textContent = `${Math.round(next.total_params / 1e6)}M`;
-  $('trainable-parameters').textContent = (next.trainable_params / 1000).toFixed(0) + 'K';
-  $('eval-count').textContent = next.held_out_examples;
+  const trainingJustFinished = state?.training && !next.training && next.trained;
+  state = next;
+  $('system-prompt').textContent = next.system_prompt;
+  $('state-pill').textContent = next.training ? 'TRAINING' : next.error ? 'ERROR' : next.trained ? 'READY TO TRY' : 'NOT TRAINED';
+  const tunedOption = $('model-select').querySelector('option[value="tuned"]');
+  tunedOption.disabled = !next.trained;
+  tunedOption.textContent = next.trained ? 'Fine-tuned model · ready' : 'Fine-tuned model · train it first';
+  if (!next.trained && $('model-select').value === 'tuned') $('model-select').value = 'base';
+  if (trainingJustFinished) {
+    $('model-select').value = 'tuned';
+    clearAnswer();
+    $('generate-status').textContent = 'Fine-tuning finished. The fine-tuned model is selected; generate again.';
+  }
+  $('model-select').disabled = generating || next.training;
+  $('generate').disabled = generating || next.training;
+  $('train').disabled = generating || next.training;
+  $('train').firstChild.textContent = next.trained ? 'Fine-tune again ' : 'Fine-tune model ';
   $('progress-fill').style.width = `${Math.round(next.step / next.total_steps * 100)}%`;
-  $('progress-text').textContent = next.error || (next.training ? `Training step ${next.step} / ${next.total_steps} on CPU…` : next.trained ? 'Finished · adapter saved to outputs/helio-lora' : 'Ready to train on your CPU.');
-  $('loss-value').textContent = next.history.length ? next.history.at(-1).eval_loss.toFixed(3) : '—';
-  $('train').firstChild.textContent = next.training ? 'Training… ' : next.trained ? 'Fine-tune again ' : 'Fine-tune generative model ';
-  chart(next.history); setBusy(busy);
+  $('progress-text').textContent = next.error || (next.training
+    ? `Training step ${next.step} of ${next.total_steps}…`
+    : next.trained
+      ? 'Done. The fine-tuned model is now available in the selector above.'
+      : 'After training, the fine-tuned option will become available above.');
+  $('trainable-parameters').textContent = `${Math.round(next.trainable_params / 1000)}K trainable weights`;
+  chart(next.history);
 }
 
-async function compare() {
-  setBusy(true); $('compare-status').textContent = 'Generating two free-form answers…';
+async function generate() {
+  if (generating || state?.training) return;
+  const variant = $('model-select').value;
+  generating = true;
+  $('generate').disabled = $('train').disabled = $('model-select').disabled = true;
+  $('user-prompt').disabled = $('example-prompt').disabled = true;
+  $('generate-status').textContent = `Generating with the ${variant === 'tuned' ? 'fine-tuned' : 'base'} model…`;
   try {
-    const result = await api('/api/compare', {prompt: $('compare-prompt').value});
-    $('base-reply').textContent = result.base || '(empty answer)';
-    $('current-reply').textContent = result.current || '(empty answer)';
-    $('compare-status').textContent = 'Both replies were generated token by token.';
-  } catch (error) { $('compare-status').textContent = error.message; }
-  finally { setBusy(false); }
+    const result = await api('/api/generate', {prompt: $('user-prompt').value, model: variant});
+    $('response-model').textContent = result.model === 'tuned' ? 'FINE-TUNED MODEL' : 'BASE MODEL';
+    $('response-stage').textContent = result.model === 'tuned' ? 'After fine-tuning' : 'Before fine-tuning';
+    $('response-text').textContent = result.reply || '(empty answer)';
+    $('generate-status').textContent = `Answer generated by the ${result.model === 'tuned' ? 'fine-tuned' : 'base'} model.`;
+  } catch (error) {
+    $('generate-status').textContent = error.message;
+  } finally {
+    generating = false;
+    $('user-prompt').disabled = $('example-prompt').disabled = false;
+    if (state) render(state);
+  }
 }
 
-function addTurn(role, content) {
-  $('conversation').querySelector('.empty-chat')?.remove();
-  const item = document.createElement('div'); item.className = `turn ${role}`;
-  const label = document.createElement('strong'); label.textContent = role === 'user' ? 'YOU' : 'HELIO MODEL';
-  const text = document.createElement('p'); text.textContent = content;
-  item.append(label, text); $('conversation').append(item); $('conversation').scrollTop = $('conversation').scrollHeight;
-}
-
-async function send() {
-  const prompt = $('chat-prompt').value.trim(); if (!prompt) return;
-  $('chat-prompt').value = ''; addTurn('user', prompt); setBusy(true);
+$('example-prompt').addEventListener('change', () => {
+  $('user-prompt').value = $('example-prompt').value;
+  clearAnswer();
+});
+$('user-prompt').addEventListener('input', clearAnswer);
+$('model-select').addEventListener('change', clearAnswer);
+$('generate').addEventListener('click', generate);
+$('train').addEventListener('click', async () => {
   try {
-    const result = await api('/api/chat', {prompt, history: history.slice(-6)});
-    const answer = result.reply || '(empty answer)'; addTurn('assistant', answer);
-    history.push({role: 'user', content: prompt}, {role: 'assistant', content: answer});
-  } catch (error) { addTurn('assistant', `Error: ${error.message}`); }
-  finally { setBusy(false); }
-}
-
-$('compare').addEventListener('click', compare);
-document.querySelectorAll('.sample').forEach(button => button.addEventListener('click', () => {$('compare-prompt').value = button.dataset.prompt; compare();}));
-$('train').addEventListener('click', async () => {try {render(await api('/api/train', {}));} catch (error) {alert(error.message);}});
-$('reset').addEventListener('click', async () => {try {render(await api('/api/reset', {})); $('base-reply').textContent = 'Generate to inspect the original answer.'; $('current-reply').textContent = 'Fine-tune and generate again.'; $('clear-chat').click();} catch (error) {alert(error.message);}});
-$('send').addEventListener('click', send);
-$('chat-prompt').addEventListener('keydown', event => {if (event.key === 'Enter') {event.preventDefault(); send();}});
-$('clear-chat').addEventListener('click', () => {history = []; const empty = document.createElement('div'); empty.className = 'empty-chat'; empty.textContent = 'The conversation is cleared. Ask a new question.'; $('conversation').replaceChildren(empty);});
+    $('train').disabled = true;
+    $('model-select').value = 'base';
+    clearAnswer();
+    render(await api('/api/train', {}));
+  } catch (error) { if (state) render(state); $('progress-text').textContent = error.message; }
+});
 setInterval(async () => {try {render(await api('/api/status'));} catch (_) {}}, 400);
 api('/api/status').then(render);
